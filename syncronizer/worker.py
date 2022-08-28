@@ -1,57 +1,27 @@
 import hashlib
 import io
-import requests
 import os
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
+from typing import Dict
+
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
-
-
-SCOPES = [
-    'https://www.googleapis.com/auth/drive',
-]
-
-BASE_FOLDER = os.environ.get('SYNC_FOLDER')
-CONFIG_FOLDER = os.environ.get('SYNC_CONFIG')
-
-
-def main():
-    creds = None
-    # The file token.json stores the user's access and refresh tokens, and is
-    # created automatically when the authorization flow completes for the first
-    # time.
-    token_file = os.path.join(CONFIG_FOLDER, 'token.json')
-    credentials_file = os.path.join(CONFIG_FOLDER, 'credentials.json')
-
-    if os.path.exists(token_file):
-        creds = Credentials.from_authorized_user_file(token_file, SCOPES)
-
-    # If there are no (valid) credentials available, let the user log in.
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(credentials_file, SCOPES)
-            creds = flow.run_local_server(port=0)
-        # Save the credentials for the next run
-        with open(token_file, 'w') as token:
-            token.write(creds.to_json())
-
-    service = build('drive', 'v3', credentials=creds)
-
-    return service
+from utils import BASE_FOLDER
 
 
 class Syncronizer:
     def __init__(self, service):
         self.service = service
 
-    def traverse_drive(self, parent, path=''):
+    def traverse_drive(self, parent: str, path: str = '') -> None:
+        """
+        Recursive traverse through objects in Google Drive
+
+        :param parent: id of the parent folder
+        :param path: absolute path in Google Drive File System
+        """
+
         try:
             query = f"'me' in owners and '{parent}' in parents and trashed = false"  #  and mimeType = 'application/vnd.google-apps.folder'
             flag = True
@@ -85,7 +55,15 @@ class Syncronizer:
         except HttpError as error:
             print(f'An error occurred: {error}')
 
-    def download_file(self, file_id, path, mime_type):
+    def download_file(self, file_id: str, path: str, mime_type: str) -> None:
+        """
+        Download file from Google Drive
+
+        :param file_id: id of the file
+        :param path: relative path to the file in a local storage (absolute path in Google Drive)
+        :param mime_type: mime type of the file
+        """
+
         try:
             if mime_type == 'application/vnd.google-apps.document':
                 request = self.service.files().export_media(fileId=file_id, mimeType=mime_type)
@@ -105,11 +83,15 @@ class Syncronizer:
         except HttpError as error:
             print(F'An error when downloading file {file_id} occurred: {error}')
   
-    def check_in_local(self, path, item):
+    def check_in_local(self, path: str, item: Dict) -> None:
         """
         Check file from drive in local storage. If file is changed you can rewrite it either on local or drive.
         If file doesn't exist in local storage you can either delete it from drive or add it to local storage.
+
+        :param path: relative path in a local storage
+        :param item: JSON object representing a file info
         """
+
         local_path = os.path.join(BASE_FOLDER, path)
         if not os.path.exists(local_path):
             print(f'File does not exist on local: {path} -- {item["id"]}')
@@ -129,28 +111,39 @@ class Syncronizer:
         elif item["md5Checksum"] != self.calculate_md5_hash(local_path):
             print(f'File was updated: {path} -- {item["id"]}')
 
-    def get_file(self, file_id):
+    def get_file(self, file_id: str) -> None:
+        """
+        Print out all info about the object (file) in Google Drive
+
+        :param file_id: id of the file
+        """
+
         item = self.service.files().get(fileId=file_id, fields='*').execute()
         
         for k,v in item.items():
             print(k, '    ', v)
 
-    def find_by_name(self, name):
+    def find_by_name(self, name: str) -> None:
+        """
+        Find a file in Google Drive by the name anf print info
+
+        :param name: name of the searched file
+        """
+
         query = f"'me' in owners and name = '{name}'"  #  and mimeType = 'application/vnd.google-apps.folder'
         results = self.service.files().list(q=query, fields="nextPageToken, files(id, name, mimeType, md5Checksum)").execute()
         print(results.get('files'))
 
     @staticmethod
-    def calculate_md5_hash(path):
+    def calculate_md5_hash(path: str) -> str:
+        """
+        Calculate md5 checksum of the file in the local storage and return it
+
+        :param path: absolute path to file in the local storage
+        """
+
         with open(path, "rb") as f:
             bytes_data = f.read() 
 
         return hashlib.md5(bytes_data).hexdigest()
-
-
-if __name__ == '__main__':
-    service = main()
-    sync = Syncronizer(service)
-
-    sync.traverse_drive('root')
-    
+        
